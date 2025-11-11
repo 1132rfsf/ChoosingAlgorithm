@@ -1,0 +1,172 @@
+import numpy as np
+from typing import List, Dict, Tuple
+# 导入新的库
+from sentence_transformers import SentenceTransformer, util
+
+
+# ==============================================================================
+# 1. 数据获取 (伪代码) - 此部分不变
+# ==============================================================================
+
+def crawl_graduate_school_data() -> List[Dict]:
+    """模拟从考研网站爬取数据的函数。"""
+    print("正在从考研网站爬取数据...")
+    mock_data = [
+        {"school": "北京大学", "major": "计算机科学与技术", "past_score": 390, "major_rank": 1},
+        {"school": "清华大学", "major": "计算机科学与技术", "past_score": 395, "major_rank": 1},
+        {"school": "浙江大学", "major": "软件工程", "past_score": 380, "major_rank": 3},
+        {"school": "上海交通大学", "major": "计算机技术(专业学位)", "past_score": 375, "major_rank": 5},
+        {"school": "复旦大学", "major": "人工智能", "past_score": 385, "major_rank": 2},
+        {"school": "南京大学", "major": "计算机科学与技术", "past_score": 385, "major_rank": 4},
+        {"school": "中国科学技术大学", "major": "数据科学", "past_score": 370, "major_rank": 8},
+        {"school": "华中科技大学", "major": "计算机科学与技术", "past_score": 365, "major_rank": 10},
+        {"school": "西安交通大学", "major": "软件工程", "past_score": 360, "major_rank": 12},
+        {"school": "哈尔滨工业大学", "major": "网络空间安全", "past_score": 368, "major_rank": 15},
+        {"school": "北京邮电大学", "major": "计算机科学与技术", "past_score":378, "major_rank": 20},
+        {"school": "电子科技大学", "major": "电子信息", "past_score": 355, "major_rank": 25},
+    ]
+#初步数据模拟，后续往年分数应用列表呈现
+    print("数据爬取完成。")
+    return mock_data
+
+
+# ==============================================================================
+# 2. (修正) 评估算法实现
+# ==============================================================================
+
+# --- 全局变量：加载Sentence-Transformer模型 ---
+# 我们选择一个多语言模型，它对中文支持很好，且首次运行会自动下载
+print("正在加载高级语义匹配模型 (首次运行需要下载约400MB，请耐心等待)...")
+# 'paraphrase-multilingual-MiniLM-L12-v2' 是一个高效且效果好的多语言模型
+semantic_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+print("模型加载完成！")
+
+
+def evaluate_major_match_semantic(user_ideal_major: str, target_major: str, model) -> float:
+    """
+    (修正版) 使用Sentence-Transformer模型评估专业匹配度。
+    通过计算两个专业名称的余弦相似度来打分，分数范围 [0, 1]。
+    """
+    # 将专业名称编码为向量
+    # 模型会自动处理分词等预处理
+    embedding1 = model.encode(user_ideal_major, convert_to_tensor=True)
+    embedding2 = model.encode(target_major, convert_to_tensor=True)
+
+    # 计算余弦相似度，util.cos_sim返回一个tensor
+    cosine_similarity = util.cos_sim(embedding1, embedding2)
+
+    # 提取标量值并确保在[0, 1]范围内
+    # 该模型输出的相似度本身就在[-1, 1]之间，我们进行归一化
+    score = (cosine_similarity.item() + 1) / 2
+
+    return score
+#能否引进更精准的大模型？
+
+def evaluate_score_match(user_estimated_score: int, past_score: int) -> float:
+    """评估分数匹配度（录取概率）。此部分不变。"""
+
+    score_diff = abs(user_estimated_score - past_score)
+    if score_diff <= 20:
+        rate=(20-score_diff)/20
+        return rate
+    else:
+        return 0
+
+#初步计算分数段匹配，后期应采用更精确的方式实现
+def calculate_final_score(
+        major_match_score: float,
+        score_match_score: float,
+        major_weight: float,
+        score_weight: float
+) -> float:
+    """计算最终的综合得分。此部分不变。"""
+    return major_match_score * major_weight + score_match_score * score_weight
+
+
+# ==============================================================================
+# 3. 主程序：考研择校推荐 (稍作修改)
+# ==============================================================================
+
+def recommend_schools(
+        all_data: List[Dict],
+        user_ideal_major: str,
+        user_estimated_score: int,
+        major_weight: float,
+        score_weight: float,
+        model  # 传入模型
+) -> List[Tuple[Dict, float]]:
+    """主推荐函数，筛选并排序最终结果。"""
+    recommendations = []
+    for item in all_data:
+        # 4. (使用修正版函数) 计算专业匹配度得分
+        major_score = evaluate_major_match_semantic(user_ideal_major, item['major'], model)
+
+        score_score = evaluate_score_match(user_estimated_score, item['past_score'])
+        final_score = calculate_final_score(major_score, score_score, major_weight, score_weight)
+
+        item_with_score = item.copy()
+        item_with_score['major_match_score'] = round(major_score, 2)
+        item_with_score['score_match_score'] = round(score_score, 2)
+        item_with_score['final_score'] = round(final_score, 2)
+
+        recommendations.append((item_with_score, final_score))
+
+    recommendations.sort(key=lambda x: x[1], reverse=True)
+    return recommendations
+
+
+# ==============================================================================
+# 4. 用户交互与结果展示 (稍作修改)
+# ==============================================================================
+
+def main():
+
+    print(" 欢迎使用考研择校智能推荐系统 ")
+
+    database = crawl_graduate_school_data()
+
+    print("\n--- 请输入您的择校偏好 ---")
+    ideal_major = input("请输入您的理想专业 (例如: 计算机科学): ")
+    estimated_score = int(input("请输入您的预估考研总分: "))
+
+    print("\n--- 请设置各项指标的重要性 (总和需为100%) ---")
+    while True:
+        try:
+            w_major = float(input("专业匹配度的重要性占比 (0-100): "))
+            w_score = float(input("分数匹配度的重要性占比 (0-100): "))
+            if abs((w_major + w_score) - 100) < 1e-6 and w_major >= 0 and w_score >= 0:
+                break
+            else:
+                print("输入无效！请确保两个权重均为非负数且总和为100。")
+        except ValueError:
+            print("输入无效！请输入数字。")
+
+    major_weight = w_major / 100.0
+    score_weight = w_score / 100.0
+
+    print("\n--- 正在为您分析并生成推荐列表... ---")
+    # 将全局模型传入推荐函数
+    ranked_recommendations = recommend_schools(
+        database, ideal_major, estimated_score, major_weight, score_weight, semantic_model
+    )
+
+    print("\n--- 为您推荐的前三所学校及专业如下 ---")
+    print("-" * 90)
+    print(f"{'排名':<5}{'学校':<20}{'专业':<25}{'往年分数线':<10}{'专业匹配度':<10}{'分数匹配度':<10}{'综合得分':<10}")
+    print("-" * 90)
+
+    for i, (item, score) in enumerate(ranked_recommendations[:3]):
+        print(
+            f"{i + 1:<5}"
+            f"{item['school']:<20}"
+            f"{item['major']:<25}"
+            f"{item['past_score']:<10}"
+            f"{item['major_match_score']:<10}"
+            f"{item['score_match_score']:<10}"
+            f"{item['final_score']:<10}"
+        )
+    print("-" * 90)
+    print("\n推荐完成！祝您考研顺利！")
+
+if __name__ == "__main__":
+    main()
